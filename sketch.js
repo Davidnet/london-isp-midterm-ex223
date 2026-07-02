@@ -157,6 +157,7 @@ function play() {
 
   currentIdx = parseInt(document.getElementById("soundSelect").value, 10);
   currentSound = sounds[currentIdx];
+  if (!currentSound) return; // sound missing/failed to load: nothing to play or analyse
   currentSound.loop();
   applyPlayback(); // keep the voice-set volume/rate across track changes
 
@@ -190,7 +191,14 @@ function startVoice() {
     speechRec = new p5.SpeechRec("en-US", onSpeechResult);
     // Continuous mode still ends on silence/errors; restart while we want it on.
     speechRec.onEnd = () => {
-      if (voiceState.listening) speechRec.start(true, false);
+      if (!voiceState.listening) return;
+      try {
+        speechRec.start(true, false);
+      } catch (e) {
+        // Engine can still be mid-transition; an uncaught throw here would
+        // kill the listen loop for good.
+        console.warn("p5.SpeechRec restart failed:", e);
+      }
     };
     speechRec.onError = (e) => {
       console.log("p5.SpeechRec error:", e.error);
@@ -205,8 +213,9 @@ function startVoice() {
   try {
     speechRec.start(true, false); // continuous, no interim results
   } catch (e) {
-    // Already running (e.g. Play pressed again before the async stop landed):
-    // fine — the onEnd handler keeps it alive while listening is true.
+    // "Already running" is fine — the onEnd handler keeps it alive while
+    // listening is true. Anything else deserves to be seen.
+    if (e.name !== "InvalidStateError") console.warn("p5.SpeechRec start failed:", e);
   }
   updateVoiceChip();
 }
@@ -218,6 +227,8 @@ function stopVoice() {
 }
 
 function onSpeechResult() {
+  // Recognition stops asynchronously: drop results that land after toggle-off.
+  if (!voiceState.listening) return;
   if (speechRec && speechRec.resultString) handleVoiceCommand(speechRec.resultString);
 }
 
@@ -229,7 +240,9 @@ function voicePlay() {
 
 // Switch track by POSITION (dropdown index), keeping the UI in sync.
 function voiceSwitchTo(idx) {
+  if (!Number.isInteger(idx) || idx < 0 || idx >= SOUND_FILES.length) return;
   const sel = document.getElementById("soundSelect");
+  if (!sel) return;
   sel.value = String(idx);
   sel.dispatchEvent(new Event("change")); // legend follows, as with a manual pick
   play();
@@ -258,14 +271,16 @@ function handleVoiceCommand(str) {
   let heard = null;
   for (let i = 0; i < words.length; i++) {
     const w = words[i];
-    if (VOICE_COLORS[w]) { voiceState.bg = w; heard = w; }
+    // Object.hasOwn guards against inherited props: a transcribed word like
+    // "constructor" must not pass the keyword lookup.
+    if (Object.hasOwn(VOICE_COLORS, w)) { voiceState.bg = w; heard = w; }
     else if (VOICE_SHAPES.includes(w)) { voiceState.shape = w; heard = w; }
     // transport
     else if (w === "play") { voicePlay(); heard = w; }
     else if (w === "stop") { stop(); heard = w; }
     else if (w === "next") { voiceSwitchTo((currentIdx + 1) % SOUND_FILES.length); heard = w; }
     else if ((w === "sound" || w === "track" || w === "song") &&
-             NUMBER_WORDS[words[i + 1]] !== undefined) {
+             words[i + 1] !== undefined && Object.hasOwn(NUMBER_WORDS, words[i + 1])) {
       const n = NUMBER_WORDS[words[i + 1]];
       voiceSwitchTo(n);
       heard = `sound ${n + 1}`;
@@ -293,6 +308,7 @@ function updateVoiceChip() {
   if (!el) return;
   el.classList.toggle("on", voiceState.listening);
   el.classList.toggle("off", !voiceState.listening);
+  el.setAttribute("aria-pressed", String(voiceState.listening));
   el.textContent = voiceState.listening
     ? `VOICE · ON — ${voiceState.lastCmd}`
     : "VOICE · OFF";
