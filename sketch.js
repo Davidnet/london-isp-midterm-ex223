@@ -25,7 +25,14 @@
 //     Voice commands (p5.speech), active for EVERY visual as an override layer:
 //       black/white/red/blue/green      -> background colour
 //       square/triangle/circle/pentagon -> shape of the generated figures
-//     Until a command is spoken each visual keeps its native background/shape.
+//       play / stop / next / "sound one..four" -> transport & track switching
+//       louder / quieter                -> volume steps
+//       faster / slower                 -> playback rate (pitch + speed warp)
+//       bigger / smaller                -> figure scale multiplier
+//       trails / clean                  -> force/remove motion-trail overpaint
+//       invert                          -> flip background brightness
+//       reset                           -> clear every voice override
+//     Until a command is spoken each visual keeps its native look.
 // -----------------------------------------------------------------------------
 
 const SOUND_FILES = [
@@ -81,20 +88,42 @@ const VOICE_COLORS = {
 };
 const VOICE_SHAPES = ["square", "triangle", "circle", "pentagon"];
 
+// Spoken numbers for "sound one..four" (with common recognizer homophones).
+const NUMBER_WORDS = {
+  one: 0, won: 0, "1": 0,
+  two: 1, to: 1, too: 1, "2": 1,
+  three: 2, "3": 2,
+  four: 3, for: 3, "4": 3,
+};
+
 let speechRec = null;
-let voiceState = { bg: null, shape: null, lastCmd: "—", listening: false };
+let voiceState = {
+  bg: null,        // background colour override (null = native)
+  shape: null,     // figure shape override (null = native)
+  scale: 1,        // bigger/smaller multiplier on generated figures
+  trails: null,    // trails/clean override (null = each visual's native wipe)
+  invert: false,   // flip background brightness; elements adapt for contrast
+  lastCmd: "—",
+  listening: false,
+};
+let voiceVolume = 1;
+let voiceRate = 1;
 
-const onLightBg = () => voiceState.bg === "white";
+let bgIsBright = false; // set on every backdrop paint; drives contrast dimming
+const onLightBg = () => bgIsBright;
 
-// Solid background: voice-selected colour wins, otherwise the visual's native one.
-function paintBackground(h, s, b) {
-  const c = voiceState.bg ? VOICE_COLORS[voiceState.bg] : [h, s, b];
-  background(c[0], c[1], c[2]);
-}
+// Backdrop for every visual. Voice colour overrides the native one, "invert"
+// flips its brightness, and "trails"/"clean" force a translucent or opaque
+// wipe. nativeAlpha is the visual's own overpaint alpha (1 = solid clear).
+function paintBackdrop(h, s, b, nativeAlpha) {
+  let c = voiceState.bg ? VOICE_COLORS[voiceState.bg] : [h, s, b];
+  if (voiceState.invert) c = [c[0], c[1], 100 - c[2]];
+  bgIsBright = c[2] > 55;
 
-// Translucent overpaint (motion trails): same override rule.
-function paintTrail(h, s, b, alpha) {
-  const c = voiceState.bg ? VOICE_COLORS[voiceState.bg] : [h, s, b];
+  let alpha = nativeAlpha;
+  if (voiceState.trails === true) alpha = Math.min(alpha, 0.18);
+  else if (voiceState.trails === false) alpha = 1;
+
   noStroke();
   fill(c[0], c[1], c[2], alpha);
   rect(0, 0, width, height);
@@ -123,6 +152,7 @@ function play() {
   currentIdx = parseInt(document.getElementById("soundSelect").value, 10);
   currentSound = sounds[currentIdx];
   currentSound.loop();
+  applyPlayback(); // keep the voice-set volume/rate across track changes
 
   ripples = [];
   particles = [];
@@ -147,7 +177,7 @@ function stop() {
   }
   if (currentSound && currentSound.isPlaying()) currentSound.stop();
   raw = null;
-  stopVoice();
+  // Voice keeps listening after Stop so "play" still works hands-free.
 }
 
 // ---- voice control -------------------------------------------------------------
@@ -178,27 +208,74 @@ function startVoice() {
   updateVoiceChip();
 }
 
-function stopVoice() {
-  voiceState.listening = false;
-  if (speechRec) speechRec.stop();
-  updateVoiceChip();
-}
-
 function onSpeechResult() {
   if (speechRec && speechRec.resultString) handleVoiceCommand(speechRec.resultString);
 }
 
-// Scan an utterance for keywords; the last one spoken wins per category.
+// -- transport helpers driven by voice --
+
+function voicePlay() {
+  if (!currentSound || !currentSound.isPlaying()) play();
+}
+
+// Switch track by POSITION (dropdown index), keeping the UI in sync.
+function voiceSwitchTo(idx) {
+  const sel = document.getElementById("soundSelect");
+  sel.value = String(idx);
+  sel.dispatchEvent(new Event("change")); // legend follows, as with a manual pick
+  play();
+}
+
+function applyPlayback() {
+  if (!currentSound) return;
+  currentSound.setVolume(voiceVolume);
+  currentSound.rate(voiceRate);
+}
+
+function voiceReset() {
+  voiceState.bg = null;
+  voiceState.shape = null;
+  voiceState.scale = 1;
+  voiceState.trails = null;
+  voiceState.invert = false;
+  voiceVolume = 1;
+  voiceRate = 1;
+  applyPlayback();
+}
+
+// Scan an utterance for keywords; later words win within a category.
 function handleVoiceCommand(str) {
-  for (const w of str.toLowerCase().split(/\s+/)) {
-    if (VOICE_COLORS[w]) {
-      voiceState.bg = w;
-      voiceState.lastCmd = w;
-    } else if (VOICE_SHAPES.includes(w)) {
-      voiceState.shape = w;
-      voiceState.lastCmd = w;
+  const words = str.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(Boolean);
+  let heard = null;
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i];
+    if (VOICE_COLORS[w]) { voiceState.bg = w; heard = w; }
+    else if (VOICE_SHAPES.includes(w)) { voiceState.shape = w; heard = w; }
+    // transport
+    else if (w === "play") { voicePlay(); heard = w; }
+    else if (w === "stop") { stop(); heard = w; }
+    else if (w === "next") { voiceSwitchTo((currentIdx + 1) % SOUND_FILES.length); heard = w; }
+    else if ((w === "sound" || w === "track" || w === "song") &&
+             NUMBER_WORDS[words[i + 1]] !== undefined) {
+      const n = NUMBER_WORDS[words[i + 1]];
+      voiceSwitchTo(n);
+      heard = `sound ${n + 1}`;
+      i++; // consume the number word
     }
+    // volume & speed
+    else if (w === "louder") { voiceVolume = Math.min(1, voiceVolume + 0.2); applyPlayback(); heard = w; }
+    else if (w === "quieter") { voiceVolume = Math.max(0.1, voiceVolume - 0.2); applyPlayback(); heard = w; }
+    else if (w === "faster") { voiceRate = Math.min(2, voiceRate * 1.25); applyPlayback(); heard = w; }
+    else if (w === "slower") { voiceRate = Math.max(0.5, voiceRate / 1.25); applyPlayback(); heard = w; }
+    // figure & effect overrides
+    else if (w === "bigger") { voiceState.scale = Math.min(3, voiceState.scale * 1.3); heard = w; }
+    else if (w === "smaller") { voiceState.scale = Math.max(0.4, voiceState.scale / 1.3); heard = w; }
+    else if (w === "trails") { voiceState.trails = true; heard = w; }
+    else if (w === "clean") { voiceState.trails = false; heard = w; }
+    else if (w === "invert") { voiceState.invert = !voiceState.invert; heard = w; }
+    else if (w === "reset") { voiceReset(); heard = w; }
   }
+  if (heard) voiceState.lastCmd = heard;
   updateVoiceChip();
 }
 
@@ -314,7 +391,7 @@ function emitRipple() {
 
 function drawRipplePond() {
   const hue = 245 + sm.centroid * 75;   // 245..320 blues -> violets
-  paintBackground(hue, 60, 10);         // dark water unless voice picked a colour
+  paintBackdrop(hue, 60, 10, 1);        // dark water unless voice overrides
   const light = onLightBg();
   const shape = voiceState.shape || "circle";
   const cx = width / 2;
@@ -369,8 +446,8 @@ function emitParticle() {
 
 function drawParticleField() {
   const hue = 200 + sm.centroid * 160;
-  // Translucent overpaint = motion trails (voice colour overrides the tint).
-  paintTrail(hue, 70, 8, 0.18);
+  // Translucent overpaint = motion trails (voice colour/trails override).
+  paintBackdrop(hue, 70, 8, 0.18);
   const light = onLightBg();
   const shape = voiceState.shape || "circle";
 
@@ -420,8 +497,8 @@ function emitSparkBurst() {
 }
 
 function drawSparkShower() {
-  // Dark sky with short trails for streaky sparks (voice colour overrides).
-  paintTrail(0, 0, 4, 0.28);
+  // Dark sky with short trails for streaky sparks (voice colour/trails override).
+  paintBackdrop(0, 0, 4, 0.28);
   const light = onLightBg();
 
   // Continuous shimmer so the always-bright sound keeps sparkling.
@@ -444,10 +521,11 @@ function drawSparkShower() {
       fill(s.hue, 90, bri, s.life);
       drawFigure(voiceState.shape, s.x, s.y, s.size * 2.2, atan2(s.vy, s.vx));
     } else {
-      // Native look: streaky line sparks.
+      // Native look: streaky line sparks ("bigger"/"smaller" scale them too).
       stroke(s.hue, 90, bri, s.life);
-      strokeWeight(s.size);
-      line(s.x, s.y, s.x - s.vx * 1.6, s.y - s.vy * 1.6);
+      strokeWeight(s.size * voiceState.scale);
+      const st = 1.6 * voiceState.scale;
+      line(s.x, s.y, s.x - s.vx * st, s.y - s.vy * st);
     }
     if (s.life <= 0) sparks.splice(k, 1);
   }
@@ -474,7 +552,7 @@ function emitFigureBurst() {
 }
 
 function drawFigureField() {
-  paintBackground(0, 0, 8); // black by default, voice-selected colour otherwise
+  paintBackdrop(0, 0, 8, 1); // black by default, voice-selected colour otherwise
   const shape = voiceState.shape || "circle";
 
   // Figures must read on any background: dark fills on white, bright otherwise.
@@ -496,7 +574,9 @@ function drawFigureField() {
 }
 
 // Draw one figure of the voice-selected shape, centred on (x, y).
+// All generated figures pass through here, so "bigger"/"smaller" scale globally.
 function drawFigure(shape, x, y, size, rot) {
+  size *= voiceState.scale;
   if (shape === "circle") {
     ellipse(x, y, size * 2);
     return;
@@ -520,7 +600,7 @@ function drawReadout() {
   noStroke();
   // Opaque backing so the text stays crisp over the trail-based visuals.
   fill(0, 0, 6, 0.9);
-  rect(6, 8, 188, 90);
+  rect(6, 8, 188, 106);
   fill(0, 0, 100, 0.9);
   textAlign(LEFT, TOP);
   textSize(12);
@@ -531,6 +611,7 @@ function drawReadout() {
     `spectralFlatness ${sm.flatness.toFixed(2)}`,
     `zcr              ${sm.zcr.toFixed(2)}`,
     `spectralFlux     ${sm.flux.toFixed(2)}`,
+    `vol ${voiceVolume.toFixed(2)}   rate ${voiceRate.toFixed(2)}`,
   ];
   lines.forEach((t, i) => text(t, 12, 12 + i * 16));
 }
