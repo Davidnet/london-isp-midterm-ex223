@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Meyda Audio Visualisation</title>
+
+  <!-- Ferric type (self-hosted): Grotesk for words, Spline Sans Mono for values.
+       @font-face declarations live in style.css. -->
+
+  <!-- p5.js (local) -->
+  <script src="lib/p5/p5.min.js"></script>
+  <script src="lib/p5/addons/p5.sound.min.js"></script>
+
+  <!-- Meyda (v5.6.3, from unpkg) -->
+  <script src="https://unpkg.com/meyda@5.6.3/dist/web/meyda.min.js"></script>
+
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="unit">
+    <span class="screw tl"></span>
+    <span class="screw tr"></span>
+    <span class="screw bl"></span>
+    <span class="screw br"></span>
+
+    <header class="unit-header">
+      <div class="brand">
+        <h1>Meyda Audio Visualisation</h1>
+        <p>Each sound is visualised through the three Meyda features chosen for it.</p>
+      </div>
+      <div class="spec">512&#8209;SAMPLE &middot; 44.1&#8202;kHz</div>
+    </header>
+
+    <div class="console">
+      <label for="soundSelect" class="tracked">Sound</label>
+      <div class="select-well">
+        <select id="soundSelect">
+          <option value="0">Ex2_sound1.wav</option>
+          <option value="1">Ex2_sound2.wav</option>
+          <option value="2">Ex2_sound3.wav</option>
+        </select>
+      </div>
+      <button id="playBtn" class="btn btn-primary">Play</button>
+      <button id="stopBtn" class="btn btn-secondary">Stop</button>
+    </div>
+
+    <div class="screen">
+      <main id="sketch-holder"></main>
+    </div>
+
+    <div id="legend" class="legend"></div>
+  </div>
+
+  <script src="sketch.js"></script>
+</body>
+</html>
