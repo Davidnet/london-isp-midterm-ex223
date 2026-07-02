@@ -143,6 +143,12 @@ function setup() {
   document.getElementById("stopBtn").addEventListener("click", stop);
   // Keep the legend in sync with the selected sound, even before Play.
   document.getElementById("soundSelect").addEventListener("change", updateLegend);
+  // Voice is opt-in: the chip is a toggle, and the click is the user gesture
+  // that lets the browser raise its microphone prompt.
+  document.getElementById("voiceChip").addEventListener("click", () => {
+    if (voiceState.listening) stopVoice();
+    else startVoice();
+  });
 }
 
 function play() {
@@ -165,9 +171,6 @@ function play() {
 
   createAnalyzer();
   updateLegend();
-
-  // Voice control is available for every visual.
-  startVoice();
 }
 
 function stop() {
@@ -177,7 +180,7 @@ function stop() {
   }
   if (currentSound && currentSound.isPlaying()) currentSound.stop();
   raw = null;
-  // Voice keeps listening after Stop so "play" still works hands-free.
+  // Voice is left alone: the toggle owns it, so "play" still works hands-free.
 }
 
 // ---- voice control -------------------------------------------------------------
@@ -205,6 +208,12 @@ function startVoice() {
     // Already running (e.g. Play pressed again before the async stop landed):
     // fine — the onEnd handler keeps it alive while listening is true.
   }
+  updateVoiceChip();
+}
+
+function stopVoice() {
+  voiceState.listening = false;
+  if (speechRec) speechRec.stop();
   updateVoiceChip();
 }
 
