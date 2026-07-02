@@ -22,9 +22,10 @@
 //       rms              -> figure size / pulse (loudness breathing, CV 0.54)
 //       spectralFlux     -> spawns a burst of figures on each onset (CV 0.63)
 //       spectralCentroid -> figure colour, dark -> hot (brightness swings, CV 0.50)
-//     Voice commands (p5.speech):
+//     Voice commands (p5.speech), active for EVERY visual as an override layer:
 //       black/white/red/blue/green      -> background colour
-//       square/triangle/circle/pentagon -> figure shape
+//       square/triangle/circle/pentagon -> shape of the generated figures
+//     Until a command is spoken each visual keeps its native background/shape.
 // -----------------------------------------------------------------------------
 
 const SOUND_FILES = [
@@ -67,8 +68,9 @@ const FEATURE_INFO = [
 ];
 
 // ---- voice control (p5.speech) ------------------------------------------------
-// Active only for the Kalte_Ohren track: continuous recognition, restarted on
-// end, scanning each utterance for the latest colour / shape keyword.
+// Continuous recognition, restarted on end, scanning each utterance for the
+// latest colour / shape keyword. Applies to every visual: bg/shape stay null
+// (native look) until spoken.
 
 const VOICE_COLORS = {
   black: [0, 0, 8],
@@ -80,7 +82,23 @@ const VOICE_COLORS = {
 const VOICE_SHAPES = ["square", "triangle", "circle", "pentagon"];
 
 let speechRec = null;
-let voiceState = { bg: "black", shape: "circle", lastCmd: "—", listening: false };
+let voiceState = { bg: null, shape: null, lastCmd: "—", listening: false };
+
+const onLightBg = () => voiceState.bg === "white";
+
+// Solid background: voice-selected colour wins, otherwise the visual's native one.
+function paintBackground(h, s, b) {
+  const c = voiceState.bg ? VOICE_COLORS[voiceState.bg] : [h, s, b];
+  background(c[0], c[1], c[2]);
+}
+
+// Translucent overpaint (motion trails): same override rule.
+function paintTrail(h, s, b, alpha) {
+  const c = voiceState.bg ? VOICE_COLORS[voiceState.bg] : [h, s, b];
+  noStroke();
+  fill(c[0], c[1], c[2], alpha);
+  rect(0, 0, width, height);
+}
 
 function preload() {
   sounds = SOUND_FILES.map((f) => loadSound(f));
@@ -118,8 +136,8 @@ function play() {
   createAnalyzer();
   updateLegend();
 
-  // Voice control belongs to the Kalte_Ohren visual only.
-  if (currentIdx === 3) startVoice();
+  // Voice control is available for every visual.
+  startVoice();
 }
 
 function stop() {
@@ -151,7 +169,12 @@ function startVoice() {
     };
   }
   voiceState.listening = true;
-  speechRec.start(true, false); // continuous, no interim results
+  try {
+    speechRec.start(true, false); // continuous, no interim results
+  } catch (e) {
+    // Already running (e.g. Play pressed again before the async stop landed):
+    // fine — the onEnd handler keeps it alive while listening is true.
+  }
   updateVoiceChip();
 }
 
@@ -290,8 +313,10 @@ function emitRipple() {
 }
 
 function drawRipplePond() {
-  const hue = 245 + sm.centroid * 75; // 245..320 blues -> violets
-  background(hue, 60, 10);            // dark water, tinted by brightness
+  const hue = 245 + sm.centroid * 75;   // 245..320 blues -> violets
+  paintBackground(hue, 60, 10);         // dark water unless voice picked a colour
+  const light = onLightBg();
+  const shape = voiceState.shape || "circle";
   const cx = width / 2;
   const cy = height / 2;
 
@@ -299,15 +324,15 @@ function drawRipplePond() {
   noFill();
   for (let i = 1; i <= 5; i++) {
     const r = i * (26 + sm.rms * 55);
-    stroke(hue, 55, 45 + i * 6, 0.5 - i * 0.07);
+    stroke(hue, 55, light ? 30 : 45 + i * 6, 0.5 - i * 0.07);
     strokeWeight(2);
-    ellipse(cx, cy, r * 2);
+    drawFigure(shape, cx, cy, r, 0);
   }
 
   // Central breathing disc (kept dark for this sound's identity).
   noStroke();
   fill(hue, 55, 28 + 42 * sm.rms, 0.55);
-  ellipse(cx, cy, 60 + 150 * sm.rms);
+  drawFigure(shape, cx, cy, 30 + 75 * sm.rms, 0);
 
   // Onset ripples travelling outward.
   noFill();
@@ -315,9 +340,9 @@ function drawRipplePond() {
     const rp = ripples[k];
     rp.r += 3.2;
     rp.alpha -= 0.012;
-    stroke(rp.hue, 60, 78, rp.alpha);
+    stroke(rp.hue, 60, light ? 35 : 78, rp.alpha);
     strokeWeight(3);
-    ellipse(cx, cy, rp.r * 2);
+    drawFigure(shape, cx, cy, rp.r, 0);
     if (rp.alpha <= 0 || rp.r > width) ripples.splice(k, 1);
   }
 }
@@ -337,20 +362,22 @@ function emitParticle() {
     hue: 200 + sm.centroid * 160, // dark cyan -> hot magenta
     bri: 35 + 60 * sm.centroid,
     size: 4 + sm.rms * 12,
+    rot: random(TWO_PI),          // only visible when voice picks a polygon shape
     life: 1,
   });
 }
 
 function drawParticleField() {
   const hue = 200 + sm.centroid * 160;
-  // Translucent overpaint = motion trails.
-  noStroke();
-  fill(hue, 70, 8, 0.18);
-  rect(0, 0, width, height);
+  // Translucent overpaint = motion trails (voice colour overrides the tint).
+  paintTrail(hue, 70, 8, 0.18);
+  const light = onLightBg();
+  const shape = voiceState.shape || "circle";
 
   const n = floor(sm.rms * 18); // rms drives emission rate
   for (let i = 0; i < n; i++) emitParticle();
 
+  noStroke();
   for (let k = particles.length - 1; k >= 0; k--) {
     const p = particles[k];
     // spectralFlatness -> turbulence: tonal = clean radial streams, noisy = chaos.
@@ -363,8 +390,8 @@ function drawParticleField() {
     p.vy *= 0.975;
     p.life -= 0.015;
 
-    fill(p.hue % 360, 85, p.bri, p.life);
-    ellipse(p.x, p.y, p.size * (0.4 + p.life));
+    fill(p.hue % 360, 85, light ? Math.min(p.bri, 45) : p.bri, p.life);
+    drawFigure(shape, p.x, p.y, (p.size * (0.4 + p.life)) / 2, p.rot);
     if (p.life <= 0) particles.splice(k, 1);
   }
   while (particles.length > MAX_PARTICLES) particles.shift();
@@ -393,10 +420,9 @@ function emitSparkBurst() {
 }
 
 function drawSparkShower() {
-  // Dark sky with short trails for streaky sparks.
-  noStroke();
-  fill(0, 0, 4, 0.28);
-  rect(0, 0, width, height);
+  // Dark sky with short trails for streaky sparks (voice colour overrides).
+  paintTrail(0, 0, 4, 0.28);
+  const light = onLightBg();
 
   // Continuous shimmer so the always-bright sound keeps sparkling.
   const shimmer = floor(sm.rms * 6);
@@ -411,9 +437,18 @@ function drawSparkShower() {
     s.vy += 0.14; // gravity -> shower
     s.life -= 0.02;
 
-    stroke(s.hue, 90, 95, s.life);
-    strokeWeight(s.size);
-    line(s.x, s.y, s.x - s.vx * 1.6, s.y - s.vy * 1.6);
+    const bri = light ? 35 : 95;
+    if (voiceState.shape) {
+      // Voice picked a figure: draw sparks as tiny tumbling figures.
+      noStroke();
+      fill(s.hue, 90, bri, s.life);
+      drawFigure(voiceState.shape, s.x, s.y, s.size * 2.2, atan2(s.vy, s.vx));
+    } else {
+      // Native look: streaky line sparks.
+      stroke(s.hue, 90, bri, s.life);
+      strokeWeight(s.size);
+      line(s.x, s.y, s.x - s.vx * 1.6, s.y - s.vy * 1.6);
+    }
     if (s.life <= 0) sparks.splice(k, 1);
   }
   while (sparks.length > MAX_SPARKS) sparks.shift();
@@ -439,11 +474,11 @@ function emitFigureBurst() {
 }
 
 function drawFigureField() {
-  const [h, s, b] = VOICE_COLORS[voiceState.bg];
-  background(h, s, b); // voice-selected background colour
+  paintBackground(0, 0, 8); // black by default, voice-selected colour otherwise
+  const shape = voiceState.shape || "circle";
 
   // Figures must read on any background: dark fills on white, bright otherwise.
-  const onLight = voiceState.bg === "white";
+  const onLight = onLightBg();
 
   for (let k = figures.length - 1; k >= 0; k--) {
     const fg = figures[k];
@@ -454,7 +489,7 @@ function drawFigureField() {
     stroke(fg.hue % 360, 80, onLight ? 30 : 95, fg.life);
     strokeWeight(2);
     fill(fg.hue % 360, 75, onLight ? 45 : 80, fg.life * 0.55);
-    drawFigure(voiceState.shape, fg.x, fg.y, size, fg.rot);
+    drawFigure(shape, fg.x, fg.y, size, fg.rot);
     if (fg.life <= 0) figures.splice(k, 1);
   }
   while (figures.length > MAX_FIGURES) figures.shift();
