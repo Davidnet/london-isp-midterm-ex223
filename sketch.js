@@ -17,12 +17,21 @@
 //       rms            -> spark size / brightness / shimmer density
 //       spectralFlux   -> fires a burst of sparks on each onset (rhythm)
 //       zcr            -> spark hue (its bright, high-frequency signature)
+//
+//   Kalte_Ohren  "Voice-controlled figure field"  (long remix; loud, rhythmic)
+//       rms              -> figure size / pulse (loudness breathing, CV 0.54)
+//       spectralFlux     -> spawns a burst of figures on each onset (CV 0.63)
+//       spectralCentroid -> figure colour, dark -> hot (brightness swings, CV 0.50)
+//     Voice commands (p5.speech):
+//       black/white/red/blue/green      -> background colour
+//       square/triangle/circle/pentagon -> figure shape
 // -----------------------------------------------------------------------------
 
 const SOUND_FILES = [
   "assets/Ex2_sound1.wav",
   "assets/Ex2_sound2.wav",
   "assets/Ex2_sound3.wav",
+  "assets/Kalte_Ohren_(_Remix_).mp3",
 ];
 
 const BUFFER = 512;            // Meyda analysis window
@@ -48,12 +57,30 @@ let needsClear = true; // force one opaque wipe when the visual changes
 let ripples = [];
 let particles = [];
 let sparks = [];
+let figures = [];
 
 const FEATURE_INFO = [
   ["rms → ring pulse", "spectralFlux → ripple", "spectralCentroid → dark hue"],
   ["spectralCentroid → particle colour", "rms → count & size", "spectralFlatness → chaos"],
   ["rms → spark size/brightness", "spectralFlux → burst", "zcr → hue"],
+  ["rms → figure size", "spectralFlux → figure burst", "spectralCentroid → figure colour"],
 ];
+
+// ---- voice control (p5.speech) ------------------------------------------------
+// Active only for the Kalte_Ohren track: continuous recognition, restarted on
+// end, scanning each utterance for the latest colour / shape keyword.
+
+const VOICE_COLORS = {
+  black: [0, 0, 8],
+  white: [0, 0, 96],
+  red:   [0, 85, 72],
+  blue:  [225, 80, 68],
+  green: [130, 70, 58],
+};
+const VOICE_SHAPES = ["square", "triangle", "circle", "pentagon"];
+
+let speechRec = null;
+let voiceState = { bg: "black", shape: "circle", lastCmd: "—", listening: false };
 
 function preload() {
   sounds = SOUND_FILES.map((f) => loadSound(f));
@@ -82,6 +109,7 @@ function play() {
   ripples = [];
   particles = [];
   sparks = [];
+  figures = [];
   fluxMax = 1e-6;
   fluxBaseline = 0;
   prevSpectrum = null;
@@ -89,6 +117,9 @@ function play() {
 
   createAnalyzer();
   updateLegend();
+
+  // Voice control belongs to the Kalte_Ohren visual only.
+  if (currentIdx === 3) startVoice();
 }
 
 function stop() {
@@ -98,6 +129,64 @@ function stop() {
   }
   if (currentSound && currentSound.isPlaying()) currentSound.stop();
   raw = null;
+  stopVoice();
+}
+
+// ---- voice control -------------------------------------------------------------
+
+function startVoice() {
+  if (!speechRec) {
+    speechRec = new p5.SpeechRec("en-US", onSpeechResult);
+    // Continuous mode still ends on silence/errors; restart while we want it on.
+    speechRec.onEnd = () => {
+      if (voiceState.listening) speechRec.start(true, false);
+    };
+    speechRec.onError = (e) => {
+      console.log("p5.SpeechRec error:", e.error);
+      // Don't fight the browser: a denied mic would make onEnd loop forever.
+      if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+        voiceState.listening = false;
+        updateVoiceChip();
+      }
+    };
+  }
+  voiceState.listening = true;
+  speechRec.start(true, false); // continuous, no interim results
+  updateVoiceChip();
+}
+
+function stopVoice() {
+  voiceState.listening = false;
+  if (speechRec) speechRec.stop();
+  updateVoiceChip();
+}
+
+function onSpeechResult() {
+  if (speechRec && speechRec.resultString) handleVoiceCommand(speechRec.resultString);
+}
+
+// Scan an utterance for keywords; the last one spoken wins per category.
+function handleVoiceCommand(str) {
+  for (const w of str.toLowerCase().split(/\s+/)) {
+    if (VOICE_COLORS[w]) {
+      voiceState.bg = w;
+      voiceState.lastCmd = w;
+    } else if (VOICE_SHAPES.includes(w)) {
+      voiceState.shape = w;
+      voiceState.lastCmd = w;
+    }
+  }
+  updateVoiceChip();
+}
+
+function updateVoiceChip() {
+  const el = document.getElementById("voiceChip");
+  if (!el) return;
+  el.classList.toggle("on", voiceState.listening);
+  el.classList.toggle("off", !voiceState.listening);
+  el.textContent = voiceState.listening
+    ? `VOICE · ON — ${voiceState.lastCmd}`
+    : "VOICE · OFF";
 }
 
 function createAnalyzer() {
@@ -162,6 +251,7 @@ function updateFeatures() {
   if (isSpike) {
     if (currentIdx === 0) emitRipple();
     else if (currentIdx === 2) emitSparkBurst();
+    else if (currentIdx === 3) emitFigureBurst();
     spawnCooldown = 5;
   }
 }
@@ -187,7 +277,8 @@ function draw() {
 
   if (currentIdx === 0) drawRipplePond();
   else if (currentIdx === 1) drawParticleField();
-  else drawSparkShower();
+  else if (currentIdx === 2) drawSparkShower();
+  else drawFigureField();
 
   drawReadout();
 }
@@ -326,6 +417,66 @@ function drawSparkShower() {
     if (s.life <= 0) sparks.splice(k, 1);
   }
   while (sparks.length > MAX_SPARKS) sparks.shift();
+}
+
+// ---- Kalte_Ohren: voice-controlled figure field --------------------------------
+
+const MAX_FIGURES = 90;
+
+function emitFigureBurst() {
+  const count = floor(3 + sm.rms * 8); // louder onset -> bigger burst
+  for (let i = 0; i < count; i++) {
+    figures.push({
+      x: random(width * 0.08, width * 0.92),
+      y: random(height * 0.1, height * 0.9),
+      base: 18 + sm.rms * 70,          // rms -> figure size
+      hue: 200 + sm.centroid * 160,    // spectralCentroid -> dark cyan -> hot magenta
+      rot: random(TWO_PI),
+      vr: random(-0.03, 0.03),
+      life: 1,
+    });
+  }
+}
+
+function drawFigureField() {
+  const [h, s, b] = VOICE_COLORS[voiceState.bg];
+  background(h, s, b); // voice-selected background colour
+
+  // Figures must read on any background: dark fills on white, bright otherwise.
+  const onLight = voiceState.bg === "white";
+
+  for (let k = figures.length - 1; k >= 0; k--) {
+    const fg = figures[k];
+    fg.rot += fg.vr;
+    fg.life -= 0.008;
+
+    const size = fg.base * (0.6 + sm.rms * 0.9); // whole field pulses with loudness
+    stroke(fg.hue % 360, 80, onLight ? 30 : 95, fg.life);
+    strokeWeight(2);
+    fill(fg.hue % 360, 75, onLight ? 45 : 80, fg.life * 0.55);
+    drawFigure(voiceState.shape, fg.x, fg.y, size, fg.rot);
+    if (fg.life <= 0) figures.splice(k, 1);
+  }
+  while (figures.length > MAX_FIGURES) figures.shift();
+}
+
+// Draw one figure of the voice-selected shape, centred on (x, y).
+function drawFigure(shape, x, y, size, rot) {
+  if (shape === "circle") {
+    ellipse(x, y, size * 2);
+    return;
+  }
+  const sides = shape === "triangle" ? 3 : shape === "square" ? 4 : 5;
+  push();
+  translate(x, y);
+  rotate(rot);
+  beginShape();
+  for (let i = 0; i < sides; i++) {
+    const a = -HALF_PI + (TWO_PI * i) / sides;
+    vertex(cos(a) * size, sin(a) * size);
+  }
+  endShape(CLOSE);
+  pop();
 }
 
 // ---- overlay -----------------------------------------------------------------
