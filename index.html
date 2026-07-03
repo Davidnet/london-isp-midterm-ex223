@@ -11,6 +11,7 @@
   <!-- p5.js (local) -->
   <script src="lib/p5/p5.min.js"></script>
   <script src="lib/p5/addons/p5.sound.min.js"></script>
+  <script src="lib/p5/addons/p5.speech.js"></script>
 
   <!-- Meyda (v5.6.3, from unpkg) -->
   <script src="https://unpkg.com/meyda@5.6.3/dist/web/meyda.min.js"></script>
@@ -39,10 +40,12 @@
           <option value="0">Ex2_sound1.wav</option>
           <option value="1">Ex2_sound2.wav</option>
           <option value="2">Ex2_sound3.wav</option>
+          <option value="3">Kalte_Ohren_(_Remix_).mp3</option>
         </select>
       </div>
       <button id="playBtn" class="btn btn-primary">Play</button>
       <button id="stopBtn" class="btn btn-secondary">Stop</button>
+      <button type="button" id="voiceChip" class="voice-chip off" title="Toggle voice control" aria-pressed="false">VOICE&nbsp;&middot;&nbsp;OFF</button>
     </div>
 
     <div class="screen">
@@ -50,6 +53,31 @@
     </div>
 
     <div id="legend" class="legend"></div>
+
+    <section class="voice-guide">
+      <h2 class="tracked">Voice Commands</h2>
+      <div class="guide-row">
+        <span class="guide-label">Background</span>
+        <kbd>black</kbd><kbd>white</kbd><kbd>red</kbd><kbd>blue</kbd><kbd>green</kbd>
+      </div>
+      <div class="guide-row">
+        <span class="guide-label">Figure shape</span>
+        <kbd>square</kbd><kbd>triangle</kbd><kbd>circle</kbd><kbd>pentagon</kbd>
+      </div>
+      <div class="guide-row">
+        <span class="guide-label">Transport</span>
+        <kbd>play</kbd><kbd>stop</kbd><kbd>next</kbd><kbd>sound one &hellip; four</kbd>
+      </div>
+      <div class="guide-row">
+        <span class="guide-label">Volume &amp; speed</span>
+        <kbd>louder</kbd><kbd>quieter</kbd><kbd>faster</kbd><kbd>slower</kbd>
+      </div>
+      <div class="guide-row">
+        <span class="guide-label">Effects</span>
+        <kbd>bigger</kbd><kbd>smaller</kbd><kbd>trails</kbd><kbd>clean</kbd><kbd>invert</kbd><kbd>reset</kbd>
+      </div>
+      <p class="guide-note">Click <strong>VOICE</strong> to enable the microphone &mdash; while on, the unit keeps listening, even when stopped.</p>
+    </section>
   </div>
 
   <script src="sketch.js"></script>
